@@ -150,6 +150,7 @@ def wrapper_extract_features(inputs):
     filepath = inputs[0]
     feature_type = inputs[1]
     up_vec = inputs[2]
+    args = inputs[3]
 
     features = extract_features(filepath, feature_type, thresholds, up_vec)
     filename = filepath.split("/")[-1]
@@ -185,7 +186,7 @@ def main(args):
         pool.map(
             wrapper_extract_features,
             [
-                (os.path.join(root, filename), args.type, args.up_vec)
+                (os.path.join(root, filename), args.type, args.up_vec, args)
                 for filename in files
             ],
         )
@@ -207,5 +208,5 @@ if __name__ == "__main__":
     parser.add_argument("--output-folder", type=str, required=True)
     parser.add_argument("--up-vec", nargs="?", choices=["y", "z"], default="z")
     parser.add_argument("--cpu", type=int, default=40)
-    args = parser.parse_args()
+    args = parser.parse_args("""--folder data\split --output-folder data\split_features --type kinetic""".split(" "))
     main(args)

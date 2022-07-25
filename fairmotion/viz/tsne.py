@@ -37,16 +37,24 @@ def plot_embeddings(filename, X, labels=None):
     ax.legend()
     plt.savefig(filename)
 
-
+from tqdm import tqdm
 def main(args):
     all_features = []
     filenames = []
     with open(args.features_file) as f:
-        for line in f:
-            filename, features = line.split(":")
+        for filename, features in tqdm(filter(lambda item:len(item)==2, map(lambda line:line.strip().split(":"), f))):
+            feature = np.array(list(map(float, features.strip().split("\t"))))
+
+            if len(feature) != 93:
+                continue
+            
+            if any(np.isnan(feature)):
+                continue
+
             all_features.append(
-                np.array(list(map(float, features.strip().split())))
+                feature
             )
+
             filenames.append(filename.strip())
     norm_features = normalize_features(all_features)
     if args.algorithm == "tsne":
@@ -77,5 +85,5 @@ if __name__ == "__main__":
     parser.add_argument("--output-file", type=str, required=True)
     parser.add_argument("--clusters-file", type=str)
     parser.add_argument("--algorithm", choices=["mds", "tsne"], required=True)
-    args = parser.parse_args()
+    args = parser.parse_args("""--features-file data\\split_features\\features.tsv --output-file data\\split_features\\tsne.jpg --clusters-file data\\split_features\\cluster.csv --algorithm tsne""".split(" "))
     main(args)

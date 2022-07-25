@@ -8,7 +8,7 @@ from fairmotion.core import motion as motion_class
 from fairmotion.ops import conversions
 
 
-TEST_SINUSOIDAL_FILE = "tests/data/sinusoidal.bvh"
+TEST_SINUSOIDAL_FILE = r"D:\git-repo\fairmotion\tests\data\sinusoidal.bvh"
 
 
 class TestMotion(unittest.TestCase):

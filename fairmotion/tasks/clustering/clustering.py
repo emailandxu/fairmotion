@@ -17,6 +17,8 @@ import numpy as np
 from sklearn.cluster import AgglomerativeClustering, DBSCAN, KMeans, OPTICS
 from collections import defaultdict
 
+from tqdm import tqdm
+
 
 def calculate_score(centroid, features):
     return np.linalg.norm(features - centroid)
@@ -114,7 +116,7 @@ def run_hierarchical_clustering(features, names, args):
 
 def normalize_features(features):
     X = np.array(features)
-    Xmean, Xstd = X.mean(axis=0), X.std(axis=0)
+    Xmean, Xstd = np.nanmean(X, axis=0), np.nanstd(X, axis=0)
     return (X - Xmean) / (Xstd + 1.0e-8)
 
 
@@ -122,12 +124,18 @@ def main(args):
     features = []
     names = []
     with open(args.features) as f:
-        for line in f:
-            line = line.strip()
-            names.append(line.split(":")[0])
-            features.append(
-                [float(x) for x in line.split(":")[-1].split("\t")]
-            )
+        for name, feature_str in tqdm(filter(lambda item:len(item)==2, map(lambda line:line.strip().split(":"), f))):
+            feature = list(map(float, feature_str.split("\t")))
+            feature = np.array(feature, dtype=np.float64)
+            
+            if len(feature) != 93:
+                continue
+            
+            if any(np.isnan(feature)):
+                continue
+
+            names.append(name)
+            features.append(feature)
 
     if 0.0 < args.clip_features < 100.0:
         np.percentile(
@@ -137,17 +145,22 @@ def main(args):
         features = normalize_features(features)
 
     if args.type == "kmeans":
+        print("run_kmeans_clustering")
         clusters = run_kmeans_clustering(features, names, args)
     elif args.type == "hierarchical":
+        print("run_hierarchical_clustering")
         clusters = run_hierarchical_clustering(features, names, args)
     elif args.type == "optics":
+        print("run_optics_clustering")
         clusters = run_optics_clustering(features, names, args)
     elif args.type == "dbscan":
+        print("run_dbscan_clustering")
         clusters = run_dbscan_clustering(features, names, args)
 
     ranked_clusters = get_ranked_clusters(clusters)
 
-    with open(args.output_file, "w") as f:
+    print(f"writing to {args.output_csv}")
+    with open(args.output_csv, "w") as f:
         for cluster in ranked_clusters:
             for (name, rank, score) in ranked_clusters[cluster]:
                 f.write(
@@ -199,5 +212,6 @@ if __name__ == "__main__":
         help="Clip feature by percentile",
         default=95,
     )
-    args = parser.parse_args()
+    
+    args = parser.parse_args("""--features data\\split_features\\features.tsv --type kmeans --num-clusters 112 --normalize-features --clip-features 90 --output-csv data\\split_features\\cluster.csv --linkage average""".split(" "))
     main(args)
