@@ -17,7 +17,7 @@ def root_ee_similarity(
     w_ee_vel=1.0,
     T_ref_1=None,
     T_ref_2=None,
-    auto_weight=True,
+    auto_weight=False,
     auto_weight_sigma=0.02,
     verbose=False,
 ):

@@ -2,10 +2,18 @@
 
 '''
 python test_motion_graph.py --v-up-env y --length 30 --num-files 5 --motion-folder XXX --output-bvh-folder YYY
+python fairmotion/tasks/motion_graph/main.py --v-up-env y --length 30 --num-files 5 --motion-folder data\split --output-bvh-folder data\output
 '''
 
 import argparse
+import pickle
+import gzip
 import logging
+from multiprocessing import cpu_count
+from typing import List, Tuple
+
+import numpy as np
+from tqdm import tqdm
 
 from fairmotion.data import bvh
 from fairmotion.core import velocity
@@ -50,28 +58,34 @@ if __name__ == "__main__":
         required=True,
         help="Number of files to generate",
     )
+
+    w_ee_pos = 10.0 # 1.0
+    w_ee_vel = 0.1 # 0.01
+    w_root_pos = 10.0
+
     parser.add_argument("--verbose", action='store_true')
     parser.add_argument("--v-up-skel", type=str, default="y")
     parser.add_argument("--v-face-skel", type=str, default="z")
-    parser.add_argument("--v-up-env", type=str, default="z")
-    parser.add_argument("--scale", type=float, default=1.0)
-    parser.add_argument("--base-length", type=float, default=2.0)
-    parser.add_argument("--stride-length", type=float, default=0.1)
-    parser.add_argument("--blend-length", type=float, default=0.2)
-    parser.add_argument("--compare-length", type=float, default=0.2)
+    parser.add_argument("--v-up-env", type=str, default="y")
+    parser.add_argument("--scale", type=float, default=1.0 * 1e-2)
+    parser.add_argument("--base-length", type=float, default=2.0) # figure out it
+    parser.add_argument("--stride-length", type=float, default=1.0) # figure out it
+    parser.add_argument("--blend-length", type=float, default=0.5 * 1.0) # figure out it
+    parser.add_argument("--compare-length", type=float, default=0.2) # figure out it
     parser.add_argument("--diff-threshold", type=float, default=5.0)
-    parser.add_argument("--w-joint-pos", type=float, default=50.0)
+    parser.add_argument("--w-joint-pos", type=float, default=1.0)
     parser.add_argument("--w-joint-vel", type=float, default=0.01)
-    parser.add_argument("--w-root-pos", type=float, default=50.0)
+    parser.add_argument("--w-root-pos", type=float, default=w_root_pos)
     parser.add_argument("--w-root-vel", type=float, default=0.01)
-    parser.add_argument("--w-ee-pos", type=float, default=50.0)
-    parser.add_argument("--w-ee-vel", type=float, default=0.01)
+    parser.add_argument("--w-ee-pos", type=float, default=w_ee_pos)
+    parser.add_argument("--w-ee-vel", type=float, default=w_ee_vel)
     parser.add_argument("--w-trajectory", type=float, default=1.0)
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--num-comparison", type=int, default=3)
     parser.add_argument("--num-workers", type=int, default=10)
 
-    args = parser.parse_args()
+    args = parser.parse_args("""--verbose --fps 24 --length 25 --num-files 5 --motion-folder data\\bvh_choremaster --output-bvh-folder data\\output""".split(" "))
+    # args = parser.parse_args("""--verbose --length 50 --num-files 5 --motion-folder data\\split --output-bvh-folder data\\output""".split(" "))
 
     # Load motions
     motion_files = args.motion_files
@@ -79,66 +93,130 @@ if __name__ == "__main__":
         for d in args.motion_folder:
             motion_files += utils.files_in_dir(d, ext="bvh")
 
+    motion_files = sorted(motion_files)[:1]
+
     if args.verbose:
         print("-----------Motion Files-----------")
         print(motion_files)
         print("----------------------------------")
 
-    motions = bvh.load_parallel(
-        motion_files,
-        scale=args.scale,
-        v_up_skel=utils.str_to_axis(args.v_up_skel),
-        v_face_skel=utils.str_to_axis(args.v_face_skel),
-        v_up_env=utils.str_to_axis(args.v_up_env),
-    )
+    def dump(motions, dir):
+        import gzip
+        import pickle
+        def zdump(item):
+            idx, motion = item
+            filename = f"{dir}\\motion-{idx}.zip"
+            with gzip.open(filename, "wb") as f:
+                pickle.dump(motion, f)
+        from multiprocessing.pool import ThreadPool
+        with ThreadPool(cpu_count()) as pool:
+            pool.map(zdump, enumerate(motions))
+
+    def load(dir):
+        import gzip
+        import pickle
+
+        def zload(filename):
+            with gzip.open(filename, "rb") as f:
+                return pickle.load(f) 
+        
+        from multiprocessing.pool import ThreadPool
+        from pathlib import Path
+        import random
+        with ThreadPool(cpu_count()) as pool:
+            motions_paths = map(str, Path(dir).glob("*.zip"))
+            motions_paths = sorted(motions_paths)
+            # random.shuffle(motions_paths)
+            motions_paths = motions_paths
+            return pool.map(zload, motions_paths)
+
+    INIT_MOTION = False
+    MOTION_DUMP_DIR = f".\\data\\\dumped_motions"
+    
+    if INIT_MOTION:
+        print("init motions...")
+        motions = bvh.load_parallel(
+            motion_files,
+            scale=args.scale,
+            v_up_skel=utils.str_to_axis(args.v_up_skel),
+            v_face_skel=utils.str_to_axis(args.v_face_skel),
+            v_up_env=utils.str_to_axis(args.v_up_env),
+        )
+        print("dump motions...")
+        dump(motions, MOTION_DUMP_DIR)
+        print("done!")
+    else:
+        print("load motions...")
+        motions = load(MOTION_DUMP_DIR)
+        print("done!")
+
+    num_joints = np.argmax(np.bincount(np.array([ motion.skel.num_joints() for motion in motions])))
+    motions = list(filter(lambda motion: len(motion.poses) // (motion.fps // args.fps) > 1 and len(motion.poses[0].data) == num_joints, motions))
 
     skel = motions[0].skel
     motions_with_velocity = []
-    for motion in motions:
-        motion.set_skeleton(skel)
-        motion_ops.resample(motion, args.fps)
-        motions_with_velocity.append(
-            velocity.MotionWithVelocity.from_motion(motion)
+    
+    INIT_MOTION_V = False
+    MOTION_V_DUMP_DIR = f".\\data\dumped_motions_with_velocity"
+    if INIT_MOTION_V:
+        for motion in tqdm(motions):
+            motion.set_skeleton(skel)
+            motion_ops.resample(motion, args.fps)
+            motions_with_velocity.append(
+                velocity.MotionWithVelocity.from_motion(motion)
+            )
+
+        logging.info(f"Loaded {len(motions_with_velocity)} files")
+        dump(motions_with_velocity, MOTION_V_DUMP_DIR)
+    else:
+        motions_with_velocity = load(MOTION_V_DUMP_DIR)
+
+
+    INIT_GRAPH = False
+    if INIT_GRAPH:
+        ''' 
+        Construct Motion Graph
+        We assume all motions have the same
+            skeleton hierarchy
+            fps
+        '''
+        mg = graph.MotionGraph(
+            motions=motions_with_velocity,
+            motion_files=motion_files,
+            skel=skel,
+            fps=args.fps,
+            base_length=args.base_length,
+            stride_length=args.stride_length,
+            compare_length=args.compare_length,
+            verbose=True,
+        )
+        mg.construct(
+            w_joints=None,
+            w_joint_pos=args.w_joint_pos,
+            w_joint_vel=args.w_joint_vel,
+            w_root_pos=args.w_root_pos,
+            w_root_vel=args.w_root_vel,
+            w_ee_pos=args.w_ee_pos,
+            w_ee_vel=args.w_ee_vel,
+            w_trajectory=args.w_trajectory,
+            diff_threshold=args.diff_threshold,
+            num_workers=args.num_workers,
         )
 
-    logging.info(f"Loaded {len(motions_with_velocity)} files")
-
-    ''' 
-    Construct Motion Graph
-    We assume all motions have the same
-        skeleton hierarchy
-        fps
-    '''
-    mg = graph.MotionGraph(
-        motions=motions_with_velocity,
-        motion_files=motion_files,
-        skel=skel,
-        fps=args.fps,
-        base_length=args.base_length,
-        stride_length=args.stride_length,
-        compare_length=args.compare_length,
-        verbose=True,
-    )
-    mg.construct(
-        w_joints=None,
-        w_joint_pos=args.w_joint_pos,
-        w_joint_vel=args.w_joint_vel,
-        w_root_pos=args.w_root_pos,
-        w_root_vel=args.w_root_vel,
-        w_ee_pos=args.w_ee_pos,
-        w_ee_vel=args.w_ee_vel,
-        w_trajectory=args.w_trajectory,
-        diff_threshold=args.diff_threshold,
-        num_workers=args.num_workers,
-    )
-
-    print("Nodes %d, Edges %d"%(mg.graph.number_of_nodes(), mg.graph.number_of_edges()))
-    print(list(mg.graph.nodes))
-
+        print("Nodes %d, Edges %d"%(mg.graph.number_of_nodes(), mg.graph.number_of_edges()))
+        print(list(mg.graph.nodes))
+        with gzip.open("temp_motion_graph.gzip", "wb") as f:
+            pickle.dump(mg, f)
+        print("Nodes %d, Edges %d"%(mg.graph.number_of_nodes(), mg.graph.number_of_edges()))
+        print(list(mg.graph.nodes))
+    else:
+        with gzip.open("temp_motion_graph.gzip", "rb") as f:
+            mg = pickle.load(f)
+    
+    removing_linear_edges : List[Tuple[int, int]] = [(f,t) for f, t in mg.graph.edges if t - f == 2]
+    list(map(lambda edge:mg.graph.remove_edge(*edge), removing_linear_edges))
+       
     mg.reduce(method="scc")
-
-    print("Nodes %d, Edges %d"%(mg.graph.number_of_nodes(), mg.graph.number_of_edges()))
-    print(list(mg.graph.nodes))
 
     cnt = 0
     visit_weights = {}
@@ -146,7 +224,7 @@ if __name__ == "__main__":
     nodes = list(mg.graph.nodes)
     for n in nodes:
         visit_weights[n] = 1.0
-    while cnt < args.num_files:
+    for cnt in tqdm(range(args.num_files)):
         m, _ = mg.create_random_motion(
             length=args.length, 
             blend_length=args.blend_length,

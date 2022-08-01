@@ -6,6 +6,8 @@ from functools import partial
 from multiprocessing import Pool
 import random
 
+from tqdm import tqdm
+
 
 def str_to_axis(s):
     if s == "x":
@@ -38,6 +40,24 @@ def get_index(index_dict, key):
         return index_dict[key.name]
 
 
+def silent(*args, **kwargs):
+    try:
+        func = kwargs["func"]
+        del kwargs['func']
+        return func(*args, **kwargs)
+    except Exception as e:
+        return None
+
+def batchit(iterable, batch_size):
+    items = list(iterable)
+    size = len(items)
+    slices = [slice(i*batch_size, (i+1)*batch_size) for i in range(size // batch_size)]
+    tail = slice(-(size%batch_size), None)
+    slices.append(tail)
+    for _slice in tqdm(slices):
+        yield items[_slice]
+
+
 def run_parallel(func, iterable, num_cpus=20, **kwargs):
     """
     Run function over multiple cpus. The function must be written such that
@@ -55,10 +75,22 @@ def run_parallel(func, iterable, num_cpus=20, **kwargs):
         Flattened list of results from running the function on iterable
         arguments
     """
-    func_with_kwargs = partial(func, **kwargs)
+    # kwargs.update(func=func)
+    # silent_func = partial(silent, **kwargs)
+    # is_not_none = lambda item:item is not None
+    # results = [silent_func(item) for item in tqdm(iterable)]
+    # return list(filter(is_not_none, results))
+
+    kwargs.update(func=func)
+    silent_func = partial(silent, **kwargs)
+
+    results = []
     with Pool(processes=num_cpus) as pool:
-        results = pool.map(func_with_kwargs, iterable)
-    return results
+        for batch in batchit(iterable, num_cpus):
+            results.extend(pool.map(silent_func, batch))
+    
+    is_not_none = lambda item:item is not None
+    return list(filter(is_not_none, results))
 
 
 def files_in_dir(

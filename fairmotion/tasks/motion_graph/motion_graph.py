@@ -130,6 +130,7 @@ def compare_and_connect_edge(
         diff = diff_pose + diff_root_ee + diff_trajectory
 
         if diff <= diff_threshold:
+            print((diff, node_id, j))
             res.append((diff, node_id, j))
     return res
 
@@ -290,7 +291,7 @@ class MotionGraph(object):
                     frame_start,
                     frame_end + num_frames_blend,
                 )
-                motion = motion_ops.stich(
+                motion = motion_ops.stitch(
                     motion1=motion, 
                     motion2=m, 
                     pivot_offset1=blend_length,
@@ -318,9 +319,9 @@ class MotionGraph(object):
         # Choose a start node randomly if it is not given
         if start_node is None:
             weights = [visit_weights[n] for n in nodes]
-            cur_node = random.choices(nodes, weights=weights)[0]
+            cur_node : int = random.choices(nodes, weights=weights)[0]
         else:
-            cur_node = start_node
+            cur_node : int = start_node
         
         visit_weights[cur_node] *= visit_discount_factor
         
@@ -351,7 +352,10 @@ class MotionGraph(object):
                 break
 
             # Jump to adjacent node (motion) randomly
-            successors = list(self.graph.successors(cur_node))
+            successors = self.graph.successors(cur_node)
+            # successors = filter(lambda node: node!=(cur_node+2), successors)
+            successors = list(successors)
+
             weights = [visit_weights[node] for node in successors]
             # print("weights", weights)
             cur_node = random.choices(successors, weights=weights)[0]

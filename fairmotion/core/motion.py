@@ -1,5 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 
+from typing import List
 import numpy as np
 import random
 
@@ -243,7 +244,8 @@ class Pose(object):
         if local:
             T1 = T
         else:
-            T0 = self.skel.get_joint(key).xform_global
+            #fix the position issue from the second motion
+            T0 = self.skel.get_joint(key).xform_from_parent_joint
             T1 = np.dot(math.invertT(T0), T)
         if do_ortho_norm:
             """
@@ -359,8 +361,8 @@ class Motion(object):
         self, name="motion", skel=None, fps=60,
     ):
         self.name = name
-        self.skel = skel
-        self.poses = []
+        self.skel : Skeleton = skel
+        self.poses : List[Pose] = []
         self.fps = fps
         self.fps_inv = 1.0 / fps
         self.info = {}
