@@ -204,3 +204,30 @@ class MotionWithVelocity(Motion):
         mv.info = m.info
         mv.compute_velocities()
         return mv
+
+
+class ComparableVelocity(Velocity):
+    def __init__(self, pose1=None, pose2=None, dt=None):
+        super().__init__(pose1, pose2, dt)
+
+    @classmethod
+    def fromVelocity(cls, vel:Velocity):
+        new_vel = cls()
+        new_vel.set_skel(vel.skel)
+        new_vel.set_data_local(vel.data_local)
+        new_vel.set_data_global(vel.data_global)
+        return new_vel
+
+    def __len__(self):
+        return self.skel.num_joints()
+
+    def __getitem__(self, idx:int):
+        return self.get_angular(idx, local=True)
+
+    def diff(self, other:"ComparableVelocity"):
+        assert len(self) == len(other)
+
+        dws = ( j-i for i,j in zip(self,other) )
+        return np.array(
+            list(map(lambda dw:np.dot(dw,dw), dws))
+        )

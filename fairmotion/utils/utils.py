@@ -46,6 +46,7 @@ def silent(*args, **kwargs):
         del kwargs['func']
         return func(*args, **kwargs)
     except Exception as e:
+        print(str(e))
         return None
 
 def batchit(iterable, batch_size):
@@ -58,7 +59,7 @@ def batchit(iterable, batch_size):
         yield items[_slice]
 
 
-def run_parallel(func, iterable, num_cpus=20, **kwargs):
+def run_parallel(func, iterable, num_cpus=16, **kwargs):
     """
     Run function over multiple cpus. The function must be written such that
     it processes single input value.
@@ -76,9 +77,9 @@ def run_parallel(func, iterable, num_cpus=20, **kwargs):
         arguments
     """
     # kwargs.update(func=func)
-    # silent_func = partial(silent, **kwargs)
+    # thefunc = partial(silent, **kwargs)
     # is_not_none = lambda item:item is not None
-    # results = [silent_func(item) for item in tqdm(iterable)]
+    # results = [thefunc(item) for item in tqdm(iterable)]
     # return list(filter(is_not_none, results))
 
     kwargs.update(func=func)

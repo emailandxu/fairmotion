@@ -1,6 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 
-from typing import List
+from functools import lru_cache
+from typing import List, Union
 import numpy as np
 import random
 
@@ -73,6 +74,9 @@ class Joint(object):
                     self.limits[1] = lm
                 else:
                     self.limits[2] = lm
+
+    def __hash__(self) -> int:
+        return hash(self.name)
 
     def get_child_joint(self, key):
         return self.child_joints[utils.get_index(self.index_child_joint, key)]
@@ -218,10 +222,11 @@ class Pose(object):
         assert skel.num_joints() == len(data), "{} vs. {}".format(
             skel.num_joints(), len(data)
         )
-        self.skel = skel
+        self.skel: Skeleton = skel
         self.data = data
 
-    def get_transform(self, key, local):
+    @lru_cache(maxsize=10000)
+    def get_transform(self, key: Union[Joint, str, int], local):
         skel = self.skel
         if local:
             return self.data[skel.get_index_joint(key)]
@@ -481,3 +486,39 @@ class Motion(object):
             pose = Pose.from_matrix(pose_data, skel, local)
             motion.poses.append(pose)
         return motion
+
+
+class ComparablePose(Pose):
+    def __init__(self, skel, data=None):
+        super().__init__(skel, data)
+
+    @classmethod
+    def fromPose(cls, pose:Pose):
+        return cls(pose.skel, pose.data)
+    
+    def __len__(self):
+        return self.skel.num_joints()
+
+    def __getitem__(self, idx) -> np.array:
+        assert isinstance(idx, int)
+        return conversions.T2R(self.get_transform(idx, local=True))
+
+    def joint_diff(self, joint_index, r1:np.array=None, r2:np.array=None) -> np.float64:       
+        if joint_index == self.skel.get_index_joint(self.skel.root_joint):
+            q1 = conversions.R2Q(r1)
+            q2 = conversions.R2Q(r2)
+            q2, _ = quaternion.Q_closest(q1, q2, self.skel.v_up_env)
+            r2 = conversions.Q2R(q2)
+
+        dR = conversions.R2A(np.dot(np.transpose(r1), r2))
+        return np.dot(dR, dR)
+    
+    def _diff(self, other:Pose):
+        for idx, (r1, r2) in enumerate(zip(self, other)):
+            yield self.joint_diff(idx, r1, r2)
+
+    def diff(self, other:"ComparablePose"):
+        assert len(self) == len(other)
+        
+        return np.array(list(self._diff(other)))
+    

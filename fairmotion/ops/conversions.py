@@ -1,5 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 
+from functools import lru_cache
 import numpy as np
 
 from fairmotion.utils import constants, utils
@@ -260,7 +261,6 @@ def T2p(T):
 def T2R(T):
     R, _ = T2Rp(T)
     return R
-
 
 def T2Rp(T):
     R = T[..., :3, :3]

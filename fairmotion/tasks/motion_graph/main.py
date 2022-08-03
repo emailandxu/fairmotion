@@ -68,7 +68,7 @@ if __name__ == "__main__":
     parser.add_argument("--v-face-skel", type=str, default="z")
     parser.add_argument("--v-up-env", type=str, default="y")
     parser.add_argument("--scale", type=float, default=1.0 * 1e-2)
-    parser.add_argument("--base-length", type=float, default=2.0) # figure out it
+    parser.add_argument("--base-length", type=float, default=1.0) # figure out it
     parser.add_argument("--stride-length", type=float, default=1.0) # figure out it
     parser.add_argument("--blend-length", type=float, default=0.5 * 1.0) # figure out it
     parser.add_argument("--compare-length", type=float, default=0.2) # figure out it
@@ -84,8 +84,10 @@ if __name__ == "__main__":
     parser.add_argument("--num-comparison", type=int, default=3)
     parser.add_argument("--num-workers", type=int, default=10)
 
-    args = parser.parse_args("""--verbose --fps 24 --length 25 --num-files 5 --motion-folder data\\bvh_choremaster --output-bvh-folder data\\output""".split(" "))
+    # args = parser.parse_args("""--verbose --fps 24 --length 30 --num-files 5 --motion-folder data\\bvh_choremaster_split --output-bvh-folder data\\output""".split(" "))
     # args = parser.parse_args("""--verbose --length 50 --num-files 5 --motion-folder data\\split --output-bvh-folder data\\output""".split(" "))
+
+    args = parser.parse_args("""--verbose --fps 24 --length 30 --num-files 5 --motion-folder data\\temp_split --output-bvh-folder data\\output""".split(" "))
 
     # Load motions
     motion_files = args.motion_files
@@ -93,7 +95,8 @@ if __name__ == "__main__":
         for d in args.motion_folder:
             motion_files += utils.files_in_dir(d, ext="bvh")
 
-    motion_files = sorted(motion_files)[:1]
+
+    motion_files = sorted(motion_files)[:]
 
     if args.verbose:
         print("-----------Motion Files-----------")
@@ -130,7 +133,7 @@ if __name__ == "__main__":
             motions_paths = motions_paths
             return pool.map(zload, motions_paths)
 
-    INIT_MOTION = False
+    INIT_MOTION = True
     MOTION_DUMP_DIR = f".\\data\\\dumped_motions"
     
     if INIT_MOTION:
@@ -156,7 +159,7 @@ if __name__ == "__main__":
     skel = motions[0].skel
     motions_with_velocity = []
     
-    INIT_MOTION_V = False
+    INIT_MOTION_V = True
     MOTION_V_DUMP_DIR = f".\\data\dumped_motions_with_velocity"
     if INIT_MOTION_V:
         for motion in tqdm(motions):
@@ -172,7 +175,7 @@ if __name__ == "__main__":
         motions_with_velocity = load(MOTION_V_DUMP_DIR)
 
 
-    INIT_GRAPH = False
+    INIT_GRAPH = True
     if INIT_GRAPH:
         ''' 
         Construct Motion Graph
@@ -203,21 +206,53 @@ if __name__ == "__main__":
             num_workers=args.num_workers,
         )
 
-        print("Nodes %d, Edges %d"%(mg.graph.number_of_nodes(), mg.graph.number_of_edges()))
-        print(list(mg.graph.nodes))
+
         with gzip.open("temp_motion_graph.gzip", "wb") as f:
             pickle.dump(mg, f)
-        print("Nodes %d, Edges %d"%(mg.graph.number_of_nodes(), mg.graph.number_of_edges()))
-        print(list(mg.graph.nodes))
     else:
         with gzip.open("temp_motion_graph.gzip", "rb") as f:
             mg = pickle.load(f)
     
-    removing_linear_edges : List[Tuple[int, int]] = [(f,t) for f, t in mg.graph.edges if t - f == 2]
-    list(map(lambda edge:mg.graph.remove_edge(*edge), removing_linear_edges))
-       
+    # removing_linear_edges : List[Tuple[int, int]] = [(f,t) for f, t in mg.graph.edges if t - f == 2]
+    # list(map(lambda edge:mg.graph.remove_edge(*edge), removing_linear_edges))
+    print("Nodes %d, Edges %d"%(mg.graph.number_of_nodes(), mg.graph.number_of_edges()))
+
+
+    def calc_weight(w_joint_pos, w_joint_vel, w_root_pos, w_root_vel, w_ee_pos, w_ee_vel, diff_pos, diff_vel, diff_root_pos, diff_root_vel, diff_ee_pos, diff_ee_vel, **kwargs):
+        weights = np.array([w_joint_pos, w_joint_vel, w_root_pos, w_root_vel, w_ee_pos, w_ee_vel])
+        value = np.array([diff_pos, diff_vel, diff_root_pos, diff_root_vel, diff_ee_pos, diff_ee_vel])
+        return np.dot(weights, value)
+
+    class RemovingEdge():
+        def __init__(self, graph) -> None:
+            self.graph = graph
+            self.remove_plan = []
+
+        def __call__(self, fromto):
+            self.remove_plan.append(fromto)
+
+        def commit(self):
+            for fromto in (self.remove_plan.pop() for _ in range(len(self.remove_plan))):
+                self.graph.remove_edge(*fromto)
+
+    weights_args = dict(w_joint_pos=1.0, w_joint_vel=0.1, w_root_pos=10.0, w_root_vel=0.01, w_ee_pos=10.0, w_ee_vel=1.0)
+    removeing_edge = RemovingEdge(mg.graph)
+    diff_threhold = 5.0
+    for fromto, edge in ((edge, mg.graph.edges[edge]) for edge in mg.graph.edges):
+        new_weights = calc_weight(**weights_args, **edge)
+        if new_weights > diff_threhold:
+            removeing_edge(fromto)
+        else:
+            edge.update(weights=new_weights)
+    
+    removeing_edge.commit()
+
+    print("Nodes %d, Edges %d"%(mg.graph.number_of_nodes(), mg.graph.number_of_edges()))
+
     mg.reduce(method="scc")
 
+    print("Nodes %d, Edges %d"%(mg.graph.number_of_nodes(), mg.graph.number_of_edges()))
+    
     cnt = 0
     visit_weights = {}
     visit_discount_factor = 0.1

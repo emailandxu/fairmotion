@@ -1,5 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 
+from functools import lru_cache
 import gzip
 import logging
 import matplotlib.pyplot as plt
@@ -55,6 +56,27 @@ def create_nodes(
     res = np.stack([motion_idx_array, frames_start, frames_end]).transpose()
     return res
 
+def create_varlen_nodes(
+    motion_idx, motions, base_length, stride_length, compare_length, fps
+):
+    """
+    Creates nodes for the graph with the whold clip. A node will have a motion with (base_length+compare_length)
+    sec long.
+    """
+    
+    res = []
+    
+    frames_compare = int(compare_length * fps)
+
+    motion = motions[motion_idx]
+    if motion.length() < base_length + compare_length:
+        return res
+
+    motion_idx_array = np.array([motion_idx])
+    frames_start = np.array([0])
+    frames_end = np.array([motion.num_frames() -1 - (frames_compare+1)]) # because the following edge creation use frame_compare + 1
+    res = np.stack([motion_idx_array, frames_start, frames_end]).transpose()
+    return res
 
 def compare_and_connect_edge(
     node_id,
@@ -83,9 +105,10 @@ def compare_and_connect_edge(
     for j in range(num_nodes):
         motion_idx_j = nodes[j]["motion_idx"]
         frame_start_j = nodes[j]["frame_start"]
-        diff_pose = 0.0
-        diff_root_ee = 0.0
-        diff_trajectory = 0.0
+        
+        diff_pose = np.array([0.0, 0.0, 0.0])
+        diff_root_ee = np.array([0.0, 0.0, 0.0, 0.0, 0.0])
+        diff_trajectory = np.array([0.0])
 
         for k in range(
             0, frames_compare + 1, (frames_compare + 1) // num_comparison
@@ -99,10 +122,10 @@ def compare_and_connect_edge(
             if k == 0:
                 T_ref = pose.get_facing_transform()
                 T_ref_j = pose_j.get_facing_transform()
-            diff_pose += similarity.pose_similarity(
+            diff_pose += similarity.my_pose_similarity(
                 pose, pose_j, vel, vel_j, w_joint_pos, w_joint_vel, w_joints
             )
-            diff_root_ee += similarity.root_ee_similarity(
+            diff_root_ee += similarity.my_root_ee_similarity(
                 pose,
                 pose_j,
                 vel,
@@ -124,14 +147,27 @@ def compare_and_connect_edge(
                     diff_trajectory += np.dot(d, d)
                 R_prev, p_prev = R, p
                 R_j_prev, p_j_prev = R_j, p_j
+
         diff_pose /= num_comparison
         diff_root_ee /= num_comparison
         diff_trajectory /= num_comparison
-        diff = diff_pose + diff_root_ee + diff_trajectory
+
+        _, diff_pos, diff_vel = diff_pose
+        _, diff_root_pos, diff_root_vel, diff_ee_pos, diff_ee_vel = diff_root_ee
+
+        diff = diff_pose[0] + diff_root_ee[0] + diff_trajectory[0]
+        diffs = {
+            "diff_pos":diff_pos,
+            "diff_vel":diff_vel,
+            "diff_root_pos":diff_root_pos,
+            "diff_root_vel":diff_root_vel,
+            "diff_ee_pos":diff_ee_pos,
+            "diff_ee_vel":diff_ee_vel
+        }
 
         if diff <= diff_threshold:
-            print((diff, node_id, j))
-            res.append((diff, node_id, j))
+            # print((diff, node_id, j))
+            res.append((diff, node_id, j, diffs))
     return res
 
 
@@ -191,7 +227,7 @@ class MotionGraph(object):
             logging.info("Creating nodes")
         # Create nodes
         ns = utils.run_parallel(
-            create_nodes,
+            create_varlen_nodes,
             list(range(len(self.motions))),
             motions=self.motions,
             num_cpus=num_workers,
@@ -245,8 +281,9 @@ class MotionGraph(object):
         self.w_trajectory = w_trajectory
         if self.verbose:
             logging.info(f"Merging {len(wes)} edges...")
-        for w, e_i, e_j in tqdm.tqdm(wes):
-            self.graph.add_edge(e_i, e_j, weights=w)
+
+        for w, e_i, e_j, diffs in tqdm.tqdm(wes):
+            self.graph.add_edge(e_i, e_j, weights=w, **diffs)
 
         self.clear_visit_info()
 
@@ -344,7 +381,8 @@ class MotionGraph(object):
             if self.verbose:
                 logging.info(f"[{cur_node}] {self.graph.nodes[cur_node]}")
 
-            t_processed += self.base_length
+            # t_processed += self.base_length
+            t_processed += (frame_end - frame_start) / self.fps
             
             if self.graph.out_degree(cur_node) == 0:
                 if self.verbose:
